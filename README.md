@@ -67,4 +67,5 @@ Implementing triggers for overdue book notifications.
 
 Creating views for frequently borrowed books.
 
+erd diagram
 <img width="1404" height="362" alt="library_management_erd" src="https://github.com/user-attachments/assets/8407dab0-9d9a-4085-8d78-88068376c524" />
