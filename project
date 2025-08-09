@@ -1,1 +1,193 @@
+- Library Management Database (MySQL)
+-- Filename: library_db.sql
+-- Engine: InnoDB, Charset: utf8mb4
 
+-- Drop existing tables (reverse order of dependencies)
+DROP TABLE IF EXISTS loan_history;
+DROP TABLE IF EXISTS loans;
+DROP TABLE IF EXISTS reservations;
+DROP TABLE IF EXISTS book_copies;
+DROP TABLE IF EXISTS book_authors;
+DROP TABLE IF EXISTS books;
+DROP TABLE IF EXISTS categories;
+DROP TABLE IF EXISTS publishers;
+DROP TABLE IF EXISTS authors;
+DROP TABLE IF EXISTS members;
+DROP TABLE IF EXISTS staff;
+
+-- Authors (authors of books)
+CREATE TABLE authors (
+  author_id INT AUTO_INCREMENT PRIMARY KEY,
+  first_name VARCHAR(100) NOT NULL,
+  last_name VARCHAR(100) NOT NULL,
+  bio TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Publishers
+CREATE TABLE publishers (
+  publisher_id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(200) NOT NULL UNIQUE,
+  address VARCHAR(300),
+  phone VARCHAR(30),
+  website VARCHAR(255),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Categories (book genres / classification)
+CREATE TABLE categories (
+  category_id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(100) NOT NULL UNIQUE,
+  description VARCHAR(255)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Books (logical book entries — not individual physical copies)
+CREATE TABLE books (
+  book_id INT AUTO_INCREMENT PRIMARY KEY,
+  isbn VARCHAR(20) UNIQUE,
+  title VARCHAR(300) NOT NULL,
+  publisher_id INT,
+  category_id INT,
+  publication_year YEAR,
+  language VARCHAR(50),
+  pages INT,
+  summary TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (publisher_id) REFERENCES publishers(publisher_id)
+    ON DELETE SET NULL
+    ON UPDATE CASCADE,
+  FOREIGN KEY (category_id) REFERENCES categories(category_id)
+    ON DELETE SET NULL
+    ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Many-to-many: book_authors (a book can have many authors, an author many books)
+CREATE TABLE book_authors (
+  book_id INT NOT NULL,
+  author_id INT NOT NULL,
+  author_order TINYINT DEFAULT 1,
+  PRIMARY KEY (book_id, author_id),
+  FOREIGN KEY (book_id) REFERENCES books(book_id)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE,
+  FOREIGN KEY (author_id) REFERENCES authors(author_id)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Physical copies of books (each copy has a copy_number and status)
+CREATE TABLE book_copies (
+  copy_id INT AUTO_INCREMENT PRIMARY KEY,
+  book_id INT NOT NULL,
+  copy_number VARCHAR(50) NOT NULL, -- local barcode or identifier
+  acquisition_date DATE,
+  purchase_price DECIMAL(10,2) DEFAULT NULL,
+  condition ENUM('NEW','GOOD','FAIR','POOR') DEFAULT 'GOOD',
+  status ENUM('AVAILABLE','ON_LOAN','RESERVED','LOST','MAINTENANCE') DEFAULT 'AVAILABLE',
+  location VARCHAR(100), -- shelf/location code
+  UNIQUE (book_id, copy_number),
+  FOREIGN KEY (book_id) REFERENCES books(book_id)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Library Members (patrons)
+CREATE TABLE members (
+  member_id INT AUTO_INCREMENT PRIMARY KEY,
+  first_name VARCHAR(100) NOT NULL,
+  last_name VARCHAR(100) NOT NULL,
+  email VARCHAR(255) UNIQUE,
+  phone VARCHAR(30),
+  address VARCHAR(300),
+  membership_start DATE NOT NULL DEFAULT (CURRENT_DATE),
+  membership_end DATE DEFAULT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Staff (librarians / employees)
+CREATE TABLE staff (
+  staff_id INT AUTO_INCREMENT PRIMARY KEY,
+  username VARCHAR(100) NOT NULL UNIQUE,
+  password_hash VARCHAR(255) NOT NULL, -- store hashed password
+  first_name VARCHAR(100) NOT NULL,
+  last_name VARCHAR(100) NOT NULL,
+  email VARCHAR(255) UNIQUE,
+  role ENUM('LIBRARIAN','ASSISTANT','MANAGER','ADMIN') NOT NULL DEFAULT 'LIBRARIAN',
+  is_active TINYINT(1) DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Reservations (member reserves a book; reservation linked to a logical book, not specific copy)
+CREATE TABLE reservations (
+  reservation_id INT AUTO_INCREMENT PRIMARY KEY,
+  member_id INT NOT NULL,
+  book_id INT NOT NULL,
+  reserved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  expires_at DATETIME,
+  status ENUM('PENDING','FULFILLED','CANCELLED','EXPIRED') DEFAULT 'PENDING',
+  notified TINYINT(1) DEFAULT 0,
+  FOREIGN KEY (member_id) REFERENCES members(member_id)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE,
+  FOREIGN KEY (book_id) REFERENCES books(book_id)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE,
+  INDEX (member_id, book_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Loans (tracks which copy is loaned to which member)
+CREATE TABLE loans (
+  loan_id INT AUTO_INCREMENT PRIMARY KEY,
+  copy_id INT NOT NULL,
+  member_id INT NOT NULL,
+  staff_id INT DEFAULT NULL, -- processed by staff
+  loan_date DATE NOT NULL DEFAULT (CURRENT_DATE),
+  due_date DATE NOT NULL,
+  return_date DATE DEFAULT NULL,
+  fine_amount DECIMAL(8,2) DEFAULT 0.00,
+  status ENUM('ACTIVE','RETURNED','OVERDUE','LOST') DEFAULT 'ACTIVE',
+  FOREIGN KEY (copy_id) REFERENCES book_copies(copy_id)
+    ON DELETE RESTRICT
+    ON UPDATE CASCADE,
+  FOREIGN KEY (member_id) REFERENCES members(member_id)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE,
+  FOREIGN KEY (staff_id) REFERENCES staff(staff_id)
+    ON DELETE SET NULL
+    ON UPDATE CASCADE,
+  INDEX (member_id),
+  INDEX (copy_id),
+  INDEX (loan_date),
+  CHECK (due_date >= loan_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Optional history table for audit: keeps immutable loan events (good for reporting)
+CREATE TABLE loan_history (
+  history_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  loan_id INT NOT NULL,
+  event_type ENUM('LOANED','RETURNED','RENEWED','FINE_ASSESSED','LOST') NOT NULL,
+  event_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  event_note TEXT,
+  FOREIGN KEY (loan_id) REFERENCES loans(loan_id)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE,
+  INDEX (loan_id, event_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Useful indexes to speed up common lookups
+CREATE INDEX idx_books_title ON books(title(200));
+CREATE INDEX idx_books_isbn ON books(isbn);
+CREATE INDEX idx_members_email ON members(email);
+CREATE INDEX idx_bookcopies_status ON book_copies(status);
+CREATE INDEX idx_loans_status_due ON loans(status, due_date);
+
+-- Example Views (optional): current active loans per member
+DROP VIEW IF EXISTS v_active_loans_per_member;
+CREATE VIEW v_active_loans_per_member AS
+SELECT m.member_id, m.first_name, m.last_name, COUNT(l.loan_id) AS active_loans
+FROM members m
+LEFT JOIN loans l ON m.member_id = l.member_id AND l.status = 'ACTIVE'
+GROUP BY m.member_id;
+
+-- End of script
